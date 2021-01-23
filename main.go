@@ -35,45 +35,48 @@ func (c *Crawler) visit(url string) bool {
 }
 
 
-func fetchUrls(url, baseUrl string, visited *map[string]bool) {
-	response, err := http.Get(url)
-	if err != nil {
-		return
-	}
-	fmt.Println(response)
-	page, err := html.Parse(response.Body)
-	if err != nil {
-		return
-	}
-	(*visited)[url] = true
-	links := fetchLinks(nil, page, visited)
-	for _, link := range links {
-		if !(*visited)[link] && strings.HasPrefix(link, baseUrl) {
-			fetchUrls(link, baseUrl, visited)
-		}
-	}
 
-}
-
-func fetchLinks(links []string, n *html.Node, visited *map[string]bool) []string {
+func (c *Crawler) fetchLinks(links []string, n *html.Node, baseUrl string) []string {
 	if n.Type == html.ElementNode && n.Data == "a" {
 		for _, a := range n.Attr {
-			if a.Key == "href" {
-				_, ok := (*visited)[a.Val]
-				if !ok {
-					links = append(links, a.Val)
-				}
-
+			if a.Key == "href" && strings.HasPrefix(a.Val, baseUrl){
+				c.visit(a.Val)
 				}
 			}
 		}
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		links = fetchLinks(links, c, visited)
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		links = c.fetchLinks(links, child, baseUrl)
 	}
 	return links
 }
 
+func (c *Crawler) Crawl(url string) {
+	var wg sync.WaitGroup
 
+	c.visit(url)
+
+	response, err := http.Get(url)
+	if err != nil {
+		return
+	}
+
+	page, err := html.Parse(response.Body)
+	if err != nil {
+		return
+	}
+
+	urls := c.fetchLinks(nil, page, url)
+
+	for _, u := range urls {
+		wg.Add(1)
+		go func(u string) {
+			defer wg.Done()
+			c.Crawl(u)
+		}(u)
+	}
+	wg.Wait()
+	return
+}
 
 func main() {
 	url := os.Args[1]
@@ -81,7 +84,7 @@ func main() {
 		fmt.Println("Usage: `webcrawler <url>`")
 		os.Exit(1)
 	}
-
-	visited := map[string]bool{}
-	fetchUrls(url, url, &visited)
-}
+		crawler := New()
+		crawler.Crawl(url)
+		fmt.Println(crawler.crawled)
+	}

@@ -17,16 +17,34 @@ type Crawler struct {
 
 type Writer struct {
 	filePath string
-	mux sync.Mutex
+	mux      sync.Mutex
+	file     *os.File
 }
 
+func (w *Writer) OpenFile() {
+	w.mux.Lock()
+	defer w.mux.Unlock()
+	file, err := os.OpenFile(w.filePath,  os.O_APPEND|os.O_WRONLY, os.ModeAppend)
+	if err != nil {
+		panic(err)
+	}
+	w.file = file
+}
+
+func (w *Writer) CloseFile() {
+	w.mux.Lock()
+	defer w.mux.Unlock()
+	defer func() {
+		if err := w.file.Close(); err != nil {
+			panic(err)
+		}
+	}()
+}
 func NewWriter(filePath string) *Writer {
-	// open output file
 	file, err := os.Create(filePath)
 	if err != nil {
 		panic(err)
 	}
-	// close fo on exit and check for its returned error
 	defer func() {
 		if err := file.Close(); err != nil {
 			panic(err)
@@ -34,6 +52,7 @@ func NewWriter(filePath string) *Writer {
 	}()
 	return &Writer{
 		filePath: filePath,
+		file: file,
 	}
 }
 
@@ -56,43 +75,33 @@ func (c *Crawler) visit(url string) bool {
 	return false
 }
 
-func (w *Writer) write(url string, file *os.File) {
+func (w *Writer) write(url string) {
+	// open input file
 	w.mux.Lock()
 	defer w.mux.Unlock()
-	_, err := file.WriteString(url)
-	if err != nil {
-		fmt.Println(err)
+	_, err1 := w.file.WriteString(url)
+	if err1 != nil {
+		panic(err1)
 	}
 }
 
-func (w *Writer) writeBatch(urls []string, wg *sync.WaitGroup) {
-	// open input file
-	file, err := os.Open(w.filePath)
-	if err != nil {
-		panic(err)
-	}
-	// close fi on exit and check for its returned error
-	defer func() {
-		if err := file.Close(); err != nil {
-			panic(err)
-		}
-	}()
-	for _, u := range urls {
-		wg.Add(1)
-		go func(u string) {
-			defer wg.Done()
-			w.write(u, file)
-		}(u)
-	}
-}
 
 
 func (c *Crawler) fetchLinks(links []string, n *html.Node, baseUrl string) []string {
 	if n.Type == html.ElementNode && n.Data == "a" {
 		for _, a := range n.Attr {
-			if a.Key == "href" && strings.HasPrefix(a.Val, baseUrl){
+			if a.Key == "href" {
+				if strings.HasPrefix(a.Val, baseUrl) {
 				if !c.visit(a.Val) {
-					fmt.Println(a.Val)
+						c.writer.write(a.Val)
+						links = append(links, a.Val)
+					}
+				}
+				if  strings.HasPrefix(a.Val, "/") && len(a.Val)>= 2 {
+					if !c.visit(baseUrl + a.Val) {
+						c.writer.write(baseUrl + a.Val + "\n")
+						links = append(links, baseUrl + a.Val )
+					}
 				}
 			}
 		}
@@ -105,7 +114,9 @@ func (c *Crawler) fetchLinks(links []string, n *html.Node, baseUrl string) []str
 
 func (c *Crawler) Crawl(url string) {
 	var wg sync.WaitGroup
+
 	c.visit(url)
+	c.writer.write(url)
 
 	response, err := http.Get(url)
 	if err != nil {
@@ -120,7 +131,6 @@ func (c *Crawler) Crawl(url string) {
 	}
 
 	urls := c.fetchLinks(nil, page, url)
-	c.writer.writeBatch(urls, &wg)
 
 	for _, u := range urls {
 		wg.Add(1)
@@ -145,6 +155,9 @@ func main() {
 		fmt.Println("Usage: `webcrawler <url> <target_directory>")
 		os.Exit(1)
 	}
-		crawler := NewCrawler(targetDirectory)
-		crawler.Crawl(url)
+
+	crawler := NewCrawler(targetDirectory)
+	crawler.writer.OpenFile()
+	defer crawler.writer.CloseFile()
+	crawler.Crawl(url)
 	}

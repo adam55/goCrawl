@@ -94,8 +94,12 @@ func LeadsToChildUrl(hrefValue string) bool {
 	return strings.HasPrefix(hrefValue, "/") && len(hrefValue)>= 2
 }
 
-
-
+func preprocessUrl(baseUrl string, subPath string) string {
+	if baseUrl[len(baseUrl) - 1] == '/' {
+		return baseUrl[:len(baseUrl) - 1] + subPath
+	}
+	return baseUrl + subPath
+}
 func (c *Crawler) ProcessNodeAttribute(a *html.Attribute, baseUrl string, wg *sync.WaitGroup) {
 	if a.Key == "href" {
 		if IsUrlWithBase(a.Val, baseUrl) {
@@ -109,13 +113,14 @@ func (c *Crawler) ProcessNodeAttribute(a *html.Attribute, baseUrl string, wg *sy
 			}
 		}
 		if  LeadsToChildUrl(a.Val){
-			if !c.Visit(baseUrl + a.Val) {
-				c.Writer.Write(baseUrl + a.Val + "\n")
+			reconstructedUrl := preprocessUrl(baseUrl, a.Val)
+			if !c.Visit(reconstructedUrl) {
+				c.Writer.Write(reconstructedUrl + "\n")
 				wg.Add(1)
 				go func(u string) {
 					defer wg.Done()
 					c.Crawl(u)
-				}(baseUrl + a.Val)
+				}(reconstructedUrl)
 			}
 		}
 	}
@@ -135,9 +140,7 @@ func (c *Crawler) FetchLinks(n *html.Node, baseUrl string, wg *sync.WaitGroup) {
 func (c *Crawler) Crawl(url string) {
 	var wg sync.WaitGroup
 
-	if !c.Visit(url) {
-		c.Writer.Write(url)
-	}
+
 	response, err := http.Get(url)
 	if err != nil {
 		fmt.Println("failed to get url response")

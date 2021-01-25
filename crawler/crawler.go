@@ -85,25 +85,37 @@ func (w *Writer) Write(url string) {
 	}
 }
 
+func IsUrlWithBase(url string, baseUrl string) bool {
+	return strings.HasPrefix(url, baseUrl)
+}
 
+func LeadsToChildUrl(hrefValue string) bool {
+	//todo refactor this into something less hacky
+	return strings.HasPrefix(hrefValue, "/") && len(hrefValue)>= 2
+}
+
+func (c *Crawler) ProcessNodeAttribute(links []string, a *html.Attribute, baseUrl string) []string {
+	if a.Key == "href" {
+		if IsUrlWithBase(a.Val, baseUrl) {
+			if !c.Visit(a.Val) {
+				c.Writer.Write(a.Val)
+				links = append(links, a.Val)
+			}
+		}
+		if  LeadsToChildUrl(a.Val){
+			if !c.Visit(baseUrl + a.Val) {
+				c.Writer.Write(baseUrl + a.Val + "\n")
+				links = append(links, baseUrl + a.Val )
+			}
+		}
+	}
+	return links
+}
 
 func (c *Crawler) FetchLinks(links []string, n *html.Node, baseUrl string) []string {
 	if n.Type == html.ElementNode && n.Data == "a" {
 		for _, a := range n.Attr {
-			if a.Key == "href" {
-				if strings.HasPrefix(a.Val, baseUrl) {
-					if !c.Visit(a.Val) {
-						c.Writer.Write(a.Val)
-						links = append(links, a.Val)
-					}
-				}
-				if  strings.HasPrefix(a.Val, "/") && len(a.Val)>= 2 {
-					if !c.Visit(baseUrl + a.Val) {
-						c.Writer.Write(baseUrl + a.Val + "\n")
-						links = append(links, baseUrl + a.Val )
-					}
-				}
-			}
+			links = c.ProcessNodeAttribute(links, &a, baseUrl)
 		}
 	}
 	for child := n.FirstChild; child != nil; child = child.NextSibling {

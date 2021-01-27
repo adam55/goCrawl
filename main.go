@@ -26,7 +26,7 @@ func main() {
 	crawler := crawler2.NewCrawler(targetDirectory)
 	crawler.Writer.OpenFile()
 	defer crawler.Writer.CloseFile()
-	crawler.Crawl(url)
+	crawler.Crawl(url, url)
 	defer fmt.Printf("Running Time: %v sec", time.Now().Sub(startTime).Seconds())
 
 }

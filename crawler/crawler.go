@@ -120,7 +120,7 @@ func (c *Crawler) ProcessNodeAttribute(a *html.Attribute, baseUrl string, wg *sy
 				wg.Add(1)
 				go func(u string) {
 					defer wg.Done()
-					c.Crawl(u)
+					c.Crawl(u, baseUrl)
 				}(preprocessedUrl)
 			}
 		}
@@ -130,7 +130,7 @@ func (c *Crawler) ProcessNodeAttribute(a *html.Attribute, baseUrl string, wg *sy
 				wg.Add(1)
 				go func(u string) {
 					defer wg.Done()
-					c.Crawl(u)
+					c.Crawl(u, baseUrl)
 				}(reconstructedUrl)
 			}
 		}
@@ -148,7 +148,7 @@ func (c *Crawler) FetchLinks(n *html.Node, baseUrl string, wg *sync.WaitGroup) {
 	}
 }
 
-func (c *Crawler) Crawl(url string) {
+func (c *Crawler) Crawl(url string, baseUrl string) {
 	var wg sync.WaitGroup
 	response, err := retryablehttp.Get(url)
 	if err != nil {
@@ -160,8 +160,8 @@ func (c *Crawler) Crawl(url string) {
 		fmt.Println("failed to parse response's body")
 		return
 	}
+	c.Visit(url)
 	c.Writer.Write(page)
-	baseUrl := preprocessUrl(url)
 	c.FetchLinks(page, baseUrl, &wg)
 	wg.Wait()
 }

@@ -1,0 +1,14 @@
+version: "3"
+
+services:
+
+  # Python container running the discord bot
+  crawler:
+    container_name: crawler
+    hostname: crawler
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+

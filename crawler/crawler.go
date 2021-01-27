@@ -1,9 +1,11 @@
 package crawler
 
 import (
+	"bytes"
 	"fmt"
+	"github.com/hashicorp/go-retryablehttp"
 	"golang.org/x/net/html"
-	"net/http"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -29,6 +31,16 @@ func (w *Writer) OpenFile() {
 		panic(err)
 	}
 	w.file = file
+}
+
+func renderNode(n *html.Node) string {
+	var buf bytes.Buffer
+	w := io.Writer(&buf)
+	err := html.Render(w, n)
+	if err != nil {
+		fmt.Println(err)
+	}
+	return buf.String()
 }
 
 func (w *Writer) CloseFile() {
@@ -71,74 +83,85 @@ func (c *Crawler) Visit(url string) bool {
 		return true
 	}
 	c.crawled[url] = true
-	fmt.Println(url)
 	return false
 }
 
-func (w *Writer) Write(url string) {
+func (w *Writer) Write(page *html.Node) {
 	// open input file
 	w.mux.Lock()
 	defer w.mux.Unlock()
-	_, err1 := w.file.WriteString(url)
+	data := renderNode(page)
+	_, err1 := w.file.WriteString(data)
 	if err1 != nil {
 		panic(err1)
 	}
 }
 
+func IsUrlWithBase(url string, baseUrl string) bool {
+	return strings.HasPrefix(url, baseUrl)
+}
 
+func LeadsToChildUrl(hrefValue string) bool {
+	//todo refactor this into something less hacky
+	return strings.HasPrefix(hrefValue, "/") && len(hrefValue)>= 2
+}
 
-func (c *Crawler) FetchLinks(links []string, n *html.Node, baseUrl string) []string {
-	if n.Type == html.ElementNode && n.Data == "a" {
-		for _, a := range n.Attr {
-			if a.Key == "href" {
-				if strings.HasPrefix(a.Val, baseUrl) {
-					if !c.Visit(a.Val) {
-						c.Writer.Write(a.Val)
-						links = append(links, a.Val)
-					}
-				}
-				if  strings.HasPrefix(a.Val, "/") && len(a.Val)>= 2 {
-					if !c.Visit(baseUrl + a.Val) {
-						c.Writer.Write(baseUrl + a.Val + "\n")
-						links = append(links, baseUrl + a.Val )
-					}
-				}
+func preprocessUrl(baseUrl string) string {
+	if baseUrl[len(baseUrl) - 1] == '/' {
+		return baseUrl[:len(baseUrl) - 1]
+	}
+	return baseUrl
+}
+func (c *Crawler) ProcessNodeAttribute(a *html.Attribute, baseUrl string, wg *sync.WaitGroup) {
+	if a.Key == "href" {
+		if IsUrlWithBase(a.Val, baseUrl) {
+			preprocessedUrl := preprocessUrl(a.Val)
+			if !c.Visit(preprocessedUrl) {
+				wg.Add(1)
+				go func(u string) {
+					defer wg.Done()
+					c.Crawl(u)
+				}(preprocessedUrl)
+			}
+		}
+		if  LeadsToChildUrl(a.Val){
+			reconstructedUrl := preprocessUrl(baseUrl + a.Val)
+			if !c.Visit(reconstructedUrl) {
+				wg.Add(1)
+				go func(u string) {
+					defer wg.Done()
+					c.Crawl(u)
+				}(reconstructedUrl)
 			}
 		}
 	}
-	for child := n.FirstChild; child != nil; child = child.NextSibling {
-		links = c.FetchLinks(links, child, baseUrl)
+}
+
+func (c *Crawler) FetchLinks(n *html.Node, baseUrl string, wg *sync.WaitGroup) {
+	if n.Type == html.ElementNode && n.Data == "a" {
+		for _, a := range n.Attr {
+			c.ProcessNodeAttribute(&a, baseUrl, wg)
+		}
 	}
-	return links
+	for child := n.FirstChild; child != nil; child = child.NextSibling {
+		c.FetchLinks(child, baseUrl, wg)
+	}
 }
 
 func (c *Crawler) Crawl(url string) {
 	var wg sync.WaitGroup
-
-	if !c.Visit(url) {
-		c.Writer.Write(url)
-	}
-	response, err := http.Get(url)
+	response, err := retryablehttp.Get(url)
 	if err != nil {
-		fmt.Println("failed to get url response")
+		fmt.Println(err)
 		return
 	}
-
 	page, err := html.Parse(response.Body)
 	if err != nil {
 		fmt.Println("failed to parse response's body")
 		return
 	}
-
-	urls := c.FetchLinks(nil, page, url)
-
-	for _, u := range urls {
-		wg.Add(1)
-		go func(u string) {
-			defer wg.Done()
-			c.Crawl(u)
-		}(u)
-	}
+	c.Writer.Write(page)
+	baseUrl := preprocessUrl(url)
+	c.FetchLinks(page, baseUrl, &wg)
 	wg.Wait()
-	return
 }

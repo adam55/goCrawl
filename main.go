@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 	crawler2 "webCrawler/crawler"
 )
 
@@ -21,8 +22,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	startTime := time.Now()
 	crawler := crawler2.NewCrawler(targetDirectory)
 	crawler.Writer.OpenFile()
 	defer crawler.Writer.CloseFile()
 	crawler.Crawl(url)
-	}
+	defer fmt.Printf("Running Time: %v sec", time.Now().Sub(startTime).Seconds())
+
+}

@@ -1,9 +1,11 @@
 package crawler
 
 import (
+	"bytes"
 	"fmt"
+	"github.com/hashicorp/go-retryablehttp"
 	"golang.org/x/net/html"
-	"net/http"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -29,6 +31,16 @@ func (w *Writer) OpenFile() {
 		panic(err)
 	}
 	w.file = file
+}
+
+func renderNode(n *html.Node) string {
+	var buf bytes.Buffer
+	w := io.Writer(&buf)
+	err := html.Render(w, n)
+	if err != nil {
+		fmt.Println(err)
+	}
+	return buf.String()
 }
 
 func (w *Writer) CloseFile() {
@@ -71,15 +83,15 @@ func (c *Crawler) Visit(url string) bool {
 		return true
 	}
 	c.crawled[url] = true
-	fmt.Println(url)
 	return false
 }
 
-func (w *Writer) Write(url string) {
+func (w *Writer) Write(page *html.Node) {
 	// open input file
 	w.mux.Lock()
 	defer w.mux.Unlock()
-	_, err1 := w.file.WriteString(url)
+	data := renderNode(page)
+	_, err1 := w.file.WriteString(data)
 	if err1 != nil {
 		panic(err1)
 	}
@@ -105,7 +117,6 @@ func (c *Crawler) ProcessNodeAttribute(a *html.Attribute, baseUrl string, wg *sy
 		if IsUrlWithBase(a.Val, baseUrl) {
 			preprocessedUrl := preprocessUrl(a.Val)
 			if !c.Visit(preprocessedUrl) {
-				c.Writer.Write(preprocessedUrl)
 				wg.Add(1)
 				go func(u string) {
 					defer wg.Done()
@@ -116,7 +127,6 @@ func (c *Crawler) ProcessNodeAttribute(a *html.Attribute, baseUrl string, wg *sy
 		if  LeadsToChildUrl(a.Val){
 			reconstructedUrl := preprocessUrl(baseUrl + a.Val)
 			if !c.Visit(reconstructedUrl) {
-				c.Writer.Write(reconstructedUrl + "\n")
 				wg.Add(1)
 				go func(u string) {
 					defer wg.Done()
@@ -140,21 +150,18 @@ func (c *Crawler) FetchLinks(n *html.Node, baseUrl string, wg *sync.WaitGroup) {
 
 func (c *Crawler) Crawl(url string) {
 	var wg sync.WaitGroup
-	response, err := http.Get(url)
+	response, err := retryablehttp.Get(url)
 	if err != nil {
-		fmt.Println("failed to get url response")
+		fmt.Println(err)
 		return
 	}
-
 	page, err := html.Parse(response.Body)
 	if err != nil {
 		fmt.Println("failed to parse response's body")
 		return
 	}
+	c.Writer.Write(page)
 	baseUrl := preprocessUrl(url)
-	if !c.Visit(baseUrl) {
-		c.Writer.Write(baseUrl)
-	}
 	c.FetchLinks(page, baseUrl, &wg)
 	wg.Wait()
 }

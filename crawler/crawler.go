@@ -6,6 +6,8 @@ import (
 	"github.com/hashicorp/go-retryablehttp"
 	"golang.org/x/net/html"
 	"io"
+	"net/url"
+	_ "net/url"
 	"os"
 	"strings"
 	"sync"
@@ -23,9 +25,14 @@ type Writer struct {
 	file     *os.File
 }
 
+func GetBaseUrl(u string) string{
+	parsedUrl, err := url.Parse(u)
+	if err != nil {
+		panic(err)
+	}
+	return parsedUrl.Scheme + "://" + parsedUrl.Host
+}
 func (w *Writer) OpenFile() {
-	w.mux.Lock()
-	defer w.mux.Unlock()
 	file, err := os.OpenFile(w.filePath,  os.O_APPEND|os.O_WRONLY, os.ModeAppend)
 	if err != nil {
 		panic(err)
@@ -44,8 +51,6 @@ func renderNode(n *html.Node) string {
 }
 
 func (w *Writer) CloseFile() {
-	w.mux.Lock()
-	defer w.mux.Unlock()
 	defer func() {
 		if err := w.file.Close(); err != nil {
 			panic(err)
@@ -101,54 +106,60 @@ func IsUrlWithBase(url string, baseUrl string) bool {
 	return strings.HasPrefix(url, baseUrl)
 }
 
-func LeadsToChildUrl(hrefValue string) bool {
+func isSubPath(hrefValue string) bool {
 	//todo refactor this into something less hacky
 	return strings.HasPrefix(hrefValue, "/") && len(hrefValue)>= 2
 }
 
-func preprocessUrl(baseUrl string) string {
+
+func NodeLeadsToChild(a * html.Attribute, baseUrl string, inputUrl string) bool {
+	return isSubPath(a.Val) && strings.HasPrefix(a.Val, inputUrl[len(baseUrl):])
+}
+
+
+func PreprocessUrl(baseUrl string) string {
 	if baseUrl[len(baseUrl) - 1] == '/' {
 		return baseUrl[:len(baseUrl) - 1]
 	}
 	return baseUrl
 }
-func (c *Crawler) ProcessNodeAttribute(a *html.Attribute, baseUrl string, wg *sync.WaitGroup) {
+func (c *Crawler) ProcessNodeAttribute(a *html.Attribute, baseUrl string, inputUrl string, wg *sync.WaitGroup) {
 	if a.Key == "href" {
-		if IsUrlWithBase(a.Val, baseUrl) {
-			preprocessedUrl := preprocessUrl(a.Val)
+		if IsUrlWithBase(a.Val, inputUrl) {
+			preprocessedUrl := PreprocessUrl(a.Val)
 			if !c.Visit(preprocessedUrl) {
 				wg.Add(1)
 				go func(u string) {
 					defer wg.Done()
-					c.Crawl(u, baseUrl)
+					c.Crawl(u, baseUrl, inputUrl)
 				}(preprocessedUrl)
 			}
 		}
-		if  LeadsToChildUrl(a.Val){
-			reconstructedUrl := preprocessUrl(baseUrl + a.Val)
+		if NodeLeadsToChild(a, baseUrl, inputUrl) {
+			reconstructedUrl := PreprocessUrl(baseUrl + a.Val)
 			if !c.Visit(reconstructedUrl) {
 				wg.Add(1)
 				go func(u string) {
 					defer wg.Done()
-					c.Crawl(u, baseUrl)
+					c.Crawl(u, baseUrl, inputUrl)
 				}(reconstructedUrl)
 			}
 		}
 	}
 }
 
-func (c *Crawler) FetchLinks(n *html.Node, baseUrl string, wg *sync.WaitGroup) {
+func (c *Crawler) FetchLinks(n *html.Node,baseUrl string, inputUrl string, wg *sync.WaitGroup) {
 	if n.Type == html.ElementNode && n.Data == "a" {
 		for _, a := range n.Attr {
-			c.ProcessNodeAttribute(&a, baseUrl, wg)
+			c.ProcessNodeAttribute(&a, baseUrl, inputUrl, wg)
 		}
 	}
 	for child := n.FirstChild; child != nil; child = child.NextSibling {
-		c.FetchLinks(child, baseUrl, wg)
+		c.FetchLinks(child, baseUrl, inputUrl, wg)
 	}
 }
 
-func (c *Crawler) Crawl(url string, baseUrl string) {
+func (c *Crawler) Crawl(url string, baseUrl string, inputUrl string) {
 	var wg sync.WaitGroup
 	response, err := retryablehttp.Get(url)
 	if err != nil {
@@ -162,6 +173,6 @@ func (c *Crawler) Crawl(url string, baseUrl string) {
 	}
 	c.Visit(url)
 	c.Writer.Write(page)
-	c.FetchLinks(page, baseUrl, &wg)
+	c.FetchLinks(page, baseUrl, inputUrl, &wg)
 	wg.Wait()
 }

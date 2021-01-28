@@ -17,13 +17,3 @@ func TestIsChildUrl(t *testing.T) {
 	}
 }
 
-
-
-func allLinksStartWith(links []string, prefix string) bool {
-	for i := 0; i < len(links); i++ {
-		if !strings.HasPrefix(links[i], prefix) {
-			return false
-		}
-	}
-	return true
-}
